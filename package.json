@@ -1,0 +1,10 @@
+{
+  "name": "podkop-xhttp-converter",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "test": "node --test tests/*.test.cjs",
+    "test:engine": "node tests/engine-check.cjs"
+  },
+  "engines": {"node": ">=22"}
+}

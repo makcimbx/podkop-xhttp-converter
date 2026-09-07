@@ -1,0 +1,74 @@
+name: Test and deploy Pages
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: pages-${{ github.ref }}
+  cancel-in-progress: false
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: npm test
+      - name: Check generated configs using verified extended binaries
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir engines
+          cd engines
+          gh release download v1.13.18-extended-2.6.5 -R shtorm-7/sing-box-extended -p 'sing-box-1.13.18-extended-2.6.5-linux-amd64.tar.gz'
+          gh release download v1.14.0-extended-2.7.1 -R shtorm-7/sing-box-extended -p 'sing-box-1.14.0-extended-2.7.1-linux-amd64.tar.gz'
+          printf '%s\n' \
+            '9cb62b5e83bd5d6a1f534b57a0f5bcb8de6044a524d193f9c389aeb3a60a2875  sing-box-1.13.18-extended-2.6.5-linux-amd64.tar.gz' \
+            '6bae7a6f43f55e229741737b31ea7490757ae20e7b2fddc93674b4d8694951f9  sing-box-1.14.0-extended-2.7.1-linux-amd64.tar.gz' | sha256sum --check
+          tar -xzf sing-box-1.13.18-extended-2.6.5-linux-amd64.tar.gz
+          tar -xzf sing-box-1.14.0-extended-2.7.1-linux-amd64.tar.gz
+          cd ..
+          node tests/engine-check.cjs "$PWD/engines/sing-box-1.13.18-extended-2.6.5-linux-amd64/sing-box" "$PWD/engines/sing-box-1.14.0-extended-2.7.1-linux-amd64/sing-box"
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install browser test dependencies
+        run: |
+          python -m pip install playwright==1.62.0
+          python -m playwright install --with-deps chromium
+      - name: Browser regression tests
+        run: |
+          python -m http.server 8765 --bind 127.0.0.1 &
+          server_pid=$!
+          trap 'kill "$server_pid"' EXIT
+          curl --fail --silent --retry 5 --retry-connrefused --retry-delay 1 http://127.0.0.1:8765/ > /dev/null
+          python tests/browser-check.py http://127.0.0.1:8765
+      - name: Prepare static site only
+        if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+        run: |
+          mkdir _site
+          cp index.html style.css converter.js app.js _site/
+      - uses: actions/upload-pages-artifact@v3
+        if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+        with:
+          path: _site
+  deploy:
+    if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+    needs: test
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/configure-pages@v5
+      - name: Deploy
+        id: deployment
+        uses: actions/deploy-pages@v4
